@@ -41,7 +41,6 @@ DigitalOut RightLowBeam(PE_12);
 //=====[Declaration and initialization of private global variables]============
 
 bool engineOn = OFF;
-bool timeOfDayState = OFF;
 
 int accumulatedSwitchTime = 0;
 
@@ -184,6 +183,9 @@ void checkHeadlights() {
             }
 
         }
+    } else {
+        LeftLowBeam = OFF;
+        RightLowBeam = OFF;
     }
 
 }
