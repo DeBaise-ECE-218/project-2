@@ -2,18 +2,18 @@
 #include "mbed.h"
 #include "arm_book_lib.h"
 
-//=====[Defines]===============================================================
+//=====[Declaration of private defines]========================================
 
 #define SELECTOR_ON_THRESHOLD 0.33
 #define SELECTOR_OFF_THRESHOLD 0.66
 #define DUSK_THRESHOLD 0.66
-#define DAYLIGHT_THRESHOLD 0.82
+#define DAYLIGHT_THRESHOLD 0.9
 
 #define DUSK_TO_DAYLIGHT_TIME 2000
 #define DAYLIGHT_TO_DUSK_TIME 1000
 #define DELAY_INCREMENT 20
 
-//=====[Declaration of public data types]======================================
+//=====[Declaration of private data types]=====================================
 
 typedef enum {
     HEADLIGHT_INIT,
@@ -27,73 +27,93 @@ typedef enum {
 
 UnbufferedSerial uartUsb(USBTX, USBRX, 115200);
 
-DigitalIn Dseat(D2);
-DigitalIn Ignition(BUTTON1);
+DigitalIn driverSeatButton(D2);
+DigitalIn ignitionButton(BUTTON1);
 
 DigitalOut BlueLed(LED2);
 
 AnalogIn potentiometer(A0);
-AnalogIn lightsensor(A1);
+AnalogIn lightSensor(A1);
 
 DigitalOut LeftLowBeam(PE_10);
 DigitalOut RightLowBeam(PE_12);
 
-bool EngineOn = OFF;
+//=====[Declaration and initialization of private global variables]============
+
+bool engineOn = OFF;
 bool timeOfDayState = OFF;
 
 int accumulatedSwitchTime = 0;
+
 headlightState_t headlightAutoState = HEADLIGHT_INIT;
+
+//=====[Declarations (prototypes) of private functions]========================
 
 void inputsInit();
 void outputsInit();
-void checkheadlights();
-void checkignition();
+void checkHeadlights();
+void checkIgnition();
 
-// main() runs in its own thread in the OS
+// Run logic for program: Run checks for ignition and headlight subsystems
 int main() {
     inputsInit();
     outputsInit();
 
     while (true) {
-        checkignition();
-        checkheadlights();
+        checkIgnition();
+        checkHeadlights();
         delay(DELAY_INCREMENT);
     }
 
 }
 
+//=====[Implementations of public functions]===================================
+
+/* Initialize all inputs */
 void inputsInit()
 {
-    Dseat.mode(PullDown);
+    driverSeatButton.mode(PullDown);
 }
 
+/* Initialize all outputs */
 void outputsInit() {
     BlueLed = OFF;
     LeftLowBeam = OFF;
     RightLowBeam = OFF;
-
 }
 
-void checkignition() {
-    if(Dseat == ON && Ignition == ON && !EngineOn) {
-        while(Ignition == ON) {} // delay until it goes off
+/***
+    Run logic for checking ignition subsystem
+    - logic for turning engine on/off
+    - logic for turning blue indicator on/off
+***/
+void checkIgnition() {
+    if(driverSeatButton == ON && ignitionButton == ON && !engineOn) {
+        while(ignitionButton == ON) {} // delay until it goes off
         // Ignition is released
-        EngineOn = ON;
+        engineOn = ON;
     }
 
-    if(Ignition == ON && EngineOn) {
-        while(Ignition == ON) {}
-        EngineOn = OFF;
+    if(ignitionButton == ON && engineOn) {
+        while(ignitionButton == ON) {}
+        engineOn = OFF;
     }
 
-    BlueLed = EngineOn;
+    BlueLed = engineOn;
 }
 
-void checkheadlights() {
+/***
+    Run logic for checking headlight subsystem
+    - Read in potentiometer for switching modes
+    - Read in light sensor reading
+    - Turn on/off headlights if in manual mode
+    - Perform state machine (for delaying headlights on/off) if in automatic mode
+*/
+void checkHeadlights() {
     float potReading = potentiometer.read();
-    float lightReading = lightsensor.read();
+    float lightReading = lightSensor.read();
 
-    if(EngineOn) {
+    if(engineOn) {
         if(potReading < SELECTOR_ON_THRESHOLD) {
             // ON
             headlightAutoState = HEADLIGHT_DUSK;
@@ -107,11 +127,14 @@ void checkheadlights() {
             RightLowBeam = OFF;
         } else {
 
+            // perform state machine for automatic mode
             switch(headlightAutoState) {
+                //initial state
                 case HEADLIGHT_INIT:
                     LeftLowBeam = OFF;
                     RightLowBeam = OFF;
                     break;
+                // DAYLIGHT state => turn off headlights, check for light level threshold
                 case HEADLIGHT_DAYLIGHT:
                     accumulatedSwitchTime = 0;
                     LeftLowBeam = OFF;
@@ -121,6 +144,7 @@ void checkheadlights() {
                         headlightAutoState = HEADLIGHT_DUSK_DELAY;
                     }
                     break;
+                // DUSK state => turn on headlights, check for light level threshold
                 case HEADLIGHT_DUSK:
                     accumulatedSwitchTime = 0;
                     LeftLowBeam = ON;
@@ -129,6 +153,8 @@ void checkheadlights() {
                         headlightAutoState = HEADLIGHT_DAYLIGHT_DELAY;
                     }
                     break;
+                // DUSK DELAY state => ensure light level stays low: 
+                // if so, check how much time has passed and go to corresponding state
                 case HEADLIGHT_DUSK_DELAY:
                     if(lightReading < DUSK_THRESHOLD) {
                         if(accumulatedSwitchTime >= DAYLIGHT_TO_DUSK_TIME) {
@@ -140,6 +166,8 @@ void checkheadlights() {
                         headlightAutoState = HEADLIGHT_DAYLIGHT;
                     }
                     break;
+                // DAYLIGHT DELAY state => ensure light level stays high: 
+                // if so, check how much time has passed and go to corresponding state
                 case HEADLIGHT_DAYLIGHT_DELAY:
                     if(lightReading > DAYLIGHT_THRESHOLD) {
                         if(accumulatedSwitchTime >= DUSK_TO_DAYLIGHT_TIME) {
